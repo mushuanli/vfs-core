@@ -1,4 +1,0 @@
-export const CONVERSATION_DEFAULTS = {
-    SESSION_IDLE_TIMEOUT: 30 * 60 * 1000,
-    CLEANUP_INTERVAL: 5 * 60 * 1000,
-} as const;
