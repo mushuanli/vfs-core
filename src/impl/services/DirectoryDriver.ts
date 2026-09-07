@@ -1,8 +1,8 @@
 /**
- * @file packages/vfs-core/src/impl/services/ModuleDriver.ts
+ * @file packages/vfs-core/src/impl/services/DirectoryDriver.ts
  * @desc IFSDriver 实现 — 模块的 chroot 隔离 CRUD。
  *
- * 依赖 ModuleContext 共享状态，不再与 ModuleFS 互相回环。
+ * 依赖 DirectoryContext 共享状态，不再与 DirectoryFS 互相回环。
  * 写操作统一经过 PluginPipeline（before/after 中间件 + 短路）。
  */
 
@@ -37,20 +37,19 @@ import { toBuffer, toString } from '../../utils/encoding';
 import { isHiddenName, isAssetDirName, isInternalDirName } from '../../utils/validation';
 import * as P from '../../utils/path';
 
-import { ModuleContext } from './ModuleContext';
+import { DirectoryContext } from './DirectoryContext';
 
-export class ModuleDriver implements IFSDriver {
-    readonly moduleId: string;
+export class DirectoryDriver implements IFSDriver {
+    readonly viewId: string;
     readonly capabilities: FSCapabilities;
 
-    /** Injected by ModuleFS so the plugin pipeline can expose asset/metadata helpers. */
+    /** Injected by DirectoryFS so the plugin pipeline can expose asset/metadata helpers. */
     assets?: IAssetOperations;
 
     /** Read-through content cache (invalidated on write/delete/rename). */
-    private readonly _readCache = new Map<string, ArrayBuffer>();
 
-    constructor(private readonly ctx: ModuleContext) {
-        this.moduleId = ctx.moduleId;
+    constructor(private readonly ctx: DirectoryContext) {
+        this.viewId = ctx.viewId;
         this.capabilities = ctx.capabilities;
     }
 
@@ -58,15 +57,15 @@ export class ModuleDriver implements IFSDriver {
 
     on<E extends FSEventType>(event: E, callback: (event: FSEvent<E>) => void): () => void {
         return this.ctx.bus.on(event, (payload, meta) => {
-            if (meta.moduleId !== this.ctx.moduleId) return;
-            callback({ type: event, payload, timestamp: meta.timestamp, moduleId: meta.moduleId as string | undefined, fromTransaction: meta.fromTransaction as boolean | undefined, mountId: meta.mountId as string | undefined } as FSEvent<E>);
+            if (meta.viewId !== this.ctx.viewId) return;
+            callback({ type: event, payload, timestamp: meta.timestamp, viewId: meta.viewId as string | undefined, fromTransaction: meta.fromTransaction as boolean | undefined, mountId: meta.mountId as string | undefined } as FSEvent<E>);
         });
     }
 
     onAny(callback: (event: FSEvent) => void): () => void {
         return this.ctx.bus.onAny((payload, meta) => {
-            if (meta.moduleId !== this.ctx.moduleId) return;
-            callback({ type: meta.type as FSEventType, payload, timestamp: meta.timestamp, moduleId: meta.moduleId as string | undefined, fromTransaction: meta.fromTransaction as boolean | undefined, mountId: meta.mountId as string | undefined } as FSEvent);
+            if (meta.viewId !== this.ctx.viewId) return;
+            callback({ type: meta.type as FSEventType, payload, timestamp: meta.timestamp, viewId: meta.viewId as string | undefined, fromTransaction: meta.fromTransaction as boolean | undefined, mountId: meta.mountId as string | undefined } as FSEvent);
         });
     }
 
@@ -103,7 +102,7 @@ export class ModuleDriver implements IFSDriver {
     ): Promise<T> {
         let result: T;
         const node = resolveTarget ? await resolveTarget() : undefined;
-        const ctx: OperationContext = { operation, moduleId: this.ctx.moduleId, path, node: node ?? undefined, args };
+        const ctx: OperationContext = { operation, viewId: this.ctx.viewId, path, node: node ?? undefined, args };
         this.applyRestrictedApi(ctx);
         await this.ctx.plugins.execute(operation, ctx, async () => {
             result = await coreOp(ctx.args, node ?? undefined);
@@ -129,7 +128,7 @@ export class ModuleDriver implements IFSDriver {
     getChildren(path: string, options?: ListOptions): Promise<FSNode[] | DirEntry[]>;
     async getChildren(path: string, options?: ListOptions): Promise<FSNode[] | DirEntry[]> {
         const realPath = this.ctx.toRealPath(path);
-        this.ctx.access.checkAccess(this.ctx.caller, realPath, 'list');
+
         const children = await this.ctx.engine.listChildren(realPath);
 
         const filtered = children.filter(c => {
@@ -156,19 +155,17 @@ export class ModuleDriver implements IFSDriver {
     readContent(path: string, options?: ReadOptions): Promise<FileContent>;
     async readContent(path: string, options?: ReadOptions): Promise<FileContent> {
         const { realPath } = await this.ctx.resolveNode(path);
-        this.ctx.access.checkAccess(this.ctx.caller, realPath, 'read');
-        if (this.ctx.records) {
-            const text = await this.ctx.serializeSeqFile(realPath, this.ctx.records);
+
+        const records = this.ctx.recordsForPath(realPath);
+        if (records) {
+            const text = await this.ctx.serializeSeqFile(realPath, records);
             if (text !== null) {
                 return options?.encoding === 'binary' ? toBuffer(text) : text;
             }
         }
-        // Read-through cache: hit returns the cached FileContent; writes invalidate.
-        let data = this._readCache.get(realPath);
-        if (data === undefined) {
-            data = await this.ctx.engine.readContent(realPath, options);
-            this._readCache.set(realPath, data);
-        }
+        // Independent views and host processes can write the same source.
+        // Caching here has no shared revision/invalidation authority.
+        const data = await this.ctx.engine.readContent(realPath, options);
         if (options?.encoding === 'utf-8') return toString(data);
         return data;
     }
@@ -212,7 +209,7 @@ export class ModuleDriver implements IFSDriver {
         return { nodes: virtualized, total: virtualized.length, hasMore: false };
     }
 
-    async getStats(): Promise<import('../../protocol').FSModuleStats> {
+    async getStats(): Promise<import('../../protocol').FileSystemStats> {
         let fileCount = 0, directoryCount = 0, totalSize = 0;
         await this.walkTree((node) => {
             if (node.type === 'directory') directoryCount++;
@@ -232,7 +229,7 @@ export class ModuleDriver implements IFSDriver {
         const parentPath = options.parentPath ? this.ctx.toRealPath(options.parentPath) : this.ctx.scope.toRealPath('/');
         return this.runOperation('create', parentPath, undefined, { ...options }, async (args) => {
             const o = args as unknown as CreateFileOptions;
-            this.ctx.access.checkAccess(this.ctx.caller, parentPath, 'write');
+
             this.ctx.assertWritable(parentPath);
 
             const node = await this.ctx.engine.createFile(parentPath, o.name,
@@ -258,10 +255,9 @@ export class ModuleDriver implements IFSDriver {
         return this.runOperation('write', path, this.resolveTarget(path), { content, options }, async (args, node) => {
             const a = args as { content: FileContent; options?: WriteOptions };
             const realPath = this.ctx.toRealPath(path);
-            this.ctx.access.checkAccess(this.ctx.caller, realPath, 'write');
+
             this.ctx.assertWritable(realPath);
             await this.ctx.engine.writeContent(realPath, a.content, a.options);
-            this._readCache.delete(realPath);
             const eventPath = node ? this.ctx.toVirtualNode(node).path : path;
             this.ctx.emit('node:updated', {
                 nodes: [{ path: eventPath, changedFields: ['content'] }],
@@ -278,7 +274,7 @@ export class ModuleDriver implements IFSDriver {
         return this.runOperation('rename', path, this.resolveTarget(path), { newName }, async (args, node) => {
             const a = args as { newName: string };
             const realPath = this.ctx.toRealPath(path);
-            this.ctx.access.checkAccess(this.ctx.caller, realPath, 'write');
+
             this.ctx.assertWritable(realPath);
             await this.ctx.engine.rename(realPath, a.newName);
             const newRealPath = P.dirname(realPath) + '/' + a.newName;
@@ -294,7 +290,7 @@ export class ModuleDriver implements IFSDriver {
             const targetPath = a.targetParentPath
                 ? this.ctx.toRealPath(a.targetParentPath)
                 : this.ctx.scope.toRealPath('/');
-            this.ctx.access.checkAccess(this.ctx.caller, targetPath, 'write');
+
             this.ctx.assertWritable(targetPath);
 
             const nodes: Array<{ oldPath: string; newPath: string; oldParentPath: string | null; newParentPath: string | null }> = [];
@@ -315,10 +311,9 @@ export class ModuleDriver implements IFSDriver {
             const a = args as { paths: string[]; options?: DeleteOptions };
             for (const path of a.paths) {
                 const realPath = this.ctx.toRealPath(path);
-                this.ctx.access.checkAccess(this.ctx.caller, realPath, 'delete');
+
                 this.ctx.assertWritable(realPath);
                 await this.ctx.engine.delete(realPath, a.options);
-                this._readCache.delete(realPath);
             }
             this.ctx.emit('node:deleted', { requestedPaths: a.paths, allDeletedPaths: a.paths });
         });
@@ -328,7 +323,7 @@ export class ModuleDriver implements IFSDriver {
         return this.runOperation('updateMetadata', path, this.resolveTarget(path), { metadata }, async (args, node) => {
             const a = args as { metadata: Record<string, unknown> };
             const realPath = this.ctx.toRealPath(path);
-            this.ctx.access.checkAccess(this.ctx.caller, realPath, 'write');
+
             await this.ctx.engine.updateMetadata(realPath, a.metadata);
             const eventPath = node ? this.ctx.toVirtualNode(node).path : path;
             this.ctx.emit('node:updated', {
@@ -385,7 +380,7 @@ export class ModuleDriver implements IFSDriver {
             const dir = P.dirname(linkPath);
             const name = P.basename(linkPath);
             const realDir = this.ctx.toRealPath(dir);
-            this.ctx.access.checkAccess(this.ctx.caller, realDir, 'write');
+
             this.ctx.assertWritable(realDir);
             const node = await this.ctx.engine.createSymlink(realDir, name, a.targetPath);
             const virtual = this.ctx.toVirtualNode(node);
@@ -396,14 +391,14 @@ export class ModuleDriver implements IFSDriver {
 
     async readlink(path: string): Promise<string> {
         if (!this.ctx.capabilities.symlinks) {
-            throw new FSCapabilityError('symlinks', this.ctx.moduleId);
+            throw new FSCapabilityError('symlinks', this.ctx.viewId);
         }
         const { realPath } = await this.ctx.resolveNode(path);
         return this.ctx.engine.readSymlink(realPath);
     }
 
     async hardlink(): Promise<FSNode> {
-        throw new FSCapabilityError('hardlinks', this.ctx.moduleId);
+        throw new FSCapabilityError('hardlinks', this.ctx.viewId);
     }
 
     // ══════════════════════════════════════════════════════════
@@ -411,7 +406,7 @@ export class ModuleDriver implements IFSDriver {
     // ══════════════════════════════════════════════════════════
 
     async transaction<T>(fn: (tx: IFSDriverTransaction) => Promise<T>): Promise<T> {
-        const buffer = new TransactionEventBuffer(this.ctx.bus, { moduleId: this.ctx.moduleId });
+        const buffer = new TransactionEventBuffer(this.ctx.bus, { viewId: this.ctx.viewId });
         return this.ctx.withEventTarget(buffer, async () => {
             const tx: IFSDriverTransaction = {
                 getNode: (id) => this.getNode(id),

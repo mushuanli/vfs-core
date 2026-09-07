@@ -1,8 +1,8 @@
 /**
- * @file packages/vfs-core/src/impl/services/ModuleContext.ts
+ * @file packages/vfs-core/src/impl/services/DirectoryContext.ts
  * @desc 模块共享上下文 — 状态 + 路径映射 + 事件发射 + SeqFile 序列化。
  *
- * ModuleFS（薄外观）与 ModuleDriver（IFSDriver 实现）共享此上下文，
+ * DirectoryFS（薄外观）与 DirectoryDriver（IFSDriver 实现）共享此上下文，
  * 避免二者互相回环依赖。
  */
 
@@ -15,12 +15,11 @@ import type {
     ISystemAccess,
     IRecordStore,
 } from '../../protocol';
-import { FSError, FSNotFoundError, FSReadOnlyError } from '../../protocol';
+import { FSError, FSNotFoundError } from '../../protocol';
 
 import { VFSEngine } from '../engine/vfs-engine';
 import { detectCapabilities } from '../engine/capabilities';
 import { ScopedView } from './ScopedView';
-import { AccessController, type CallerIdentity } from '../engine/access-controller';
 import { FSEventBus } from '../event/event-bus';
 import { PluginPipeline } from '../engine/plugin-pipeline';
 import { DeviceRegistry } from '../engine/device-registry';
@@ -30,57 +29,49 @@ import type { EnginePort } from '../capabilities/EnginePort';
 import { mapRecordPaths } from '../capabilities/PathMappedRecordStore';
 import type { IEventEmitter } from '../../eventbus';
 
-export interface ModuleFSDeps {
-    moduleId: string;
+export interface DirectoryFSDeps {
+    viewId: string;
     engine: VFSEngine;
     eventBus: FSEventBus;
     plugins: PluginPipeline;
-    access: AccessController;
     devices: DeviceRegistry;
     mountId?: string;
-    isSystem?: boolean;
     /** ISystemAccess for /etc operations, injected into DeviceContext for device drivers. */
     systemAccess?: ISystemAccess;
     /** Override the root real path (used by the etc pseudo-module). */
-    rootRealPath?: string;
+    rootRealPath: string;
 }
 
-export class ModuleContext implements EnginePort {
-    readonly moduleId: string;
+export class DirectoryContext implements EnginePort {
+    readonly viewId: string;
     readonly capabilities: FSCapabilities;
     readonly engine: VFSEngine;
     readonly bus: FSEventBus;
-    readonly access: AccessController;
     readonly devices: DeviceRegistry;
     readonly scope: ScopedView;
     readonly mountId: string;
-    readonly caller: CallerIdentity;
     readonly moduleBackend: IStorageBackend;
     readonly records?: IRecordStore;
     readonly systemAccess?: ISystemAccess;
-    readonly isCustomRoot: boolean;
     readonly plugins: PluginPipeline;
 
     initialized = false;
     /** Points to the active event target — bus normally, EventBuffer during a transaction. */
     private _emitTarget: IEventEmitter<FSEventPayloadMap>;
 
-    constructor(deps: ModuleFSDeps) {
-        this.moduleId = deps.moduleId;
+    constructor(deps: DirectoryFSDeps) {
+        this.viewId = deps.viewId;
         this.engine = deps.engine;
         this.bus = deps.eventBus;
         this._emitTarget = deps.eventBus;
-        this.access = deps.access;
         this.devices = deps.devices;
         this.plugins = deps.plugins;
-        this.scope = new ScopedView(deps.moduleId, deps.rootRealPath);
-        this.isCustomRoot = deps.rootRealPath !== undefined;
+        this.scope = new ScopedView(deps.rootRealPath);
         this.mountId = deps.mountId ?? 'mount_0';
-        this.caller = { moduleId: deps.moduleId, isSystem: deps.isSystem ?? false };
         this.systemAccess = deps.systemAccess;
-        this.moduleBackend = deps.engine.getBackendForPath('/module/' + deps.moduleId);
+        this.moduleBackend = deps.engine.getBackendForPath(deps.rootRealPath);
         const records = this.moduleBackend.records;
-        this.records = records && this.moduleBackend.recordPaths === 'backend'
+        this.records = records
             ? mapRecordPaths(records, path => this.engine.recordLocation(path, this.moduleBackend).localPath) : records;
         this.capabilities = detectCapabilities(this.moduleBackend, { deviceFiles: true });
     }
@@ -96,17 +87,13 @@ export class ModuleContext implements EnginePort {
         return {
             ...node,
             path: mapPath(node.path)!,
-            parentPath: mapPath(node.parentPath),
+            parentPath: node.path === this.scope.root ? null : mapPath(node.parentPath),
         };
     }
 
     /** Convert a virtual path to a system-real path. */
     toRealPath(path: string): string {
         if (isPath(path)) {
-            const mountPrefix = '/module/' + this.moduleId + '/';
-            if (path.startsWith(mountPrefix)) {
-                return path;
-            }
             return this.scope.toRealPath(path);
         }
         throw new FSError('EINVAL', 'path-based engine requires paths, not IDs', 'resolve', path);
@@ -120,15 +107,12 @@ export class ModuleContext implements EnginePort {
         return { node, realPath };
     }
 
-    /** Check writable + permissions. System callers bypass ScopedView read-only. */
-    assertWritable(realPath: string): void {
-        if (this.caller.isSystem) return;
-        if (this.scope.isRealPathReadOnly(realPath)) throw new FSReadOnlyError(this.moduleId, realPath);
-    }
+    /** Trusted directory adapter; composed view enforces read/write grants. */
+    assertWritable(_realPath: string): void {}
 
     /** Emit a namespaced event. */
     emit<E extends FSEventType>(type: E, payload: FSEventPayloadMap[E]): void {
-        this._emitTarget.emit(type, payload, { moduleId: this.moduleId, mountId: this.mountId });
+        this._emitTarget.emit(type, payload, { viewId: this.viewId, mountId: this.mountId });
     }
 
     /**
@@ -143,6 +127,15 @@ export class ModuleContext implements EnginePort {
         } finally {
             this._emitTarget = prev;
         }
+    }
+
+    recordsForPath(realPath: string): IRecordStore | undefined {
+        const backend = this.engine.getBackendForPath(realPath);
+        if (backend === this.moduleBackend) return this.records;
+        const records = backend.records;
+        return records
+            ? mapRecordPaths(records, path => this.engine.recordLocation(path, backend).localPath)
+            : records;
     }
 
     /** Serialize a SeqFile's record fields into "key=value" lines (null when empty). */
