@@ -1,6 +1,6 @@
 # vfs-core 关键类型速查
 
-完整设计见 [VFS 设计](../../../doc/design/VFS-design.md)，导出清单见 [index.ts](../src/index.ts)。
+完整设计见 [VFS 设计](https://github.com/mushuanli/itookit/blob/main/doc/design/VFS-design.md)，导出清单见 [index.ts](../src/index.ts)。
 
 ## IFileSystem
 

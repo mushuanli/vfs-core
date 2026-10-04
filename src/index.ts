@@ -77,3 +77,5 @@ export { exportFileSystem, importFileSystem, type FileSystemArchive } from './im
 export { operationScope, withOperation } from './utils/operation';
 export { FileStorageAdapter } from './impl/services/FileStorageAdapter';
 export { FileIgnoreFilter, type FileIgnorePolicy } from './impl/services/file-ignore';
+
+export { transferFileSystemEntry, type TransferEntryOptions } from './impl/services/transfer-entry';

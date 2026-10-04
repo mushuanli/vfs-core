@@ -68,13 +68,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/mushuanli/itookit.git",
-    "directory": "packages/vfs-core"
+    "url": "git+ssh://git@github.com/mushuanli/vfs-core.git"
   },
   "bugs": {
-    "url": "https://github.com/mushuanli/itookit/issues"
+    "url": "https://github.com/mushuanli/vfs-core/issues"
   },
-  "homepage": "https://github.com/mushuanli/itookit/tree/main/packages/vfs-core#readme",
+  "homepage": "https://github.com/mushuanli/vfs-core#readme",
   "dependencies": {
     "ignore": "5.3.2",
     "yaml": "^2.8.2"
@@ -83,5 +82,6 @@
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"
-  }
+  },
+  "packageManager": "pnpm@10.20.0"
 }
