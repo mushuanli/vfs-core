@@ -22,4 +22,6 @@ The workspace uses source exports; `pnpm pack` replaces them with the ESM/CJS an
 
 See [development instructions](AGENTS.md), [key classes](doc/key-classes.md) and [entry point](src/index.ts).
 
-In itookit this repository is mounted at `packages/vfs-core` as a Git submodule. After cloning itookit run `git submodule update --init packages/vfs-core` before installing dependencies.
+In itookit a standalone checkout may be placed at `packages/vfs-core`. Local development resolves its public package exports; when the directory is absent, consumers install the declared npm version.
+
+`fs.capabilitiesAt(path).conditionalReplace` declares whether the backing store enforces whole-file revision preconditions. Unsupported `ifRevision` writes throw `ECAPABILITY` instead of silently discarding the condition. A backend without this capability can still perform ordinary writes; no atomic CAS guarantee is implied.

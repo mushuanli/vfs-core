@@ -57,6 +57,15 @@ describe('Basic CRUD (IndexedDB backend)', () => {
 
     // ── Write ────────────────────────────────────────────────────────────────
 
+    it('rejects unsupported revision preconditions without changing the file', async () => {
+        const { fs } = vfs;
+        await fs.driver.createFile({ name: 'guarded.txt', parentPath: null, content: 'original' });
+        expect((await fs.capabilitiesAt('/guarded.txt')).conditionalReplace).toBe(false);
+        await expect(fs.driver.writeContent('/guarded.txt', 'overwritten', { ifRevision: 'unknown' }))
+            .rejects.toMatchObject({ code: 'ECAPABILITY' });
+        expect(await readText(fs, '/guarded.txt')).toBe('original');
+    });
+
     it('writeContent overwrites existing content', async () => {
         const { fs } = vfs;
         await fs.driver.createFile({ name: 'write.txt', parentPath: null, content: 'old' });

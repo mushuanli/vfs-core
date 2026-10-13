@@ -206,6 +206,8 @@ export interface FSSearchResult {
  * 新增能力只需添加字段，已有实现默认 false（OCP）。
  */
 export interface FSCapabilities {
+    /** Whole-file revision preconditions are enforced by the storage backend. */
+    readonly conditionalReplace?: boolean;
     /** True only when file mutations can actually be rolled back atomically. */
     readonly atomicFileTransactions?: boolean;
     readonly readonly: boolean;

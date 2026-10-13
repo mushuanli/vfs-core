@@ -32,6 +32,7 @@ export function detectCapabilities(backend: IStorageBackend, overrides: Capabili
         hardlinks: false,
         partialRead: true,
         partialWrite: !backend.fileStorage,
+        conditionalReplace: Boolean(backend.replace),
         treeWalk: true,
         streaming: false,
         watch: false,

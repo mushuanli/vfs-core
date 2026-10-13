@@ -254,6 +254,7 @@ export class VFSEngine {
             options.onRevision?.(result.revision); return;
         }
 
+        if (options?.ifRevision !== undefined) throw new FSCapabilityError('conditional whole-file replacement');
         if (options?.expectedVersion !== undefined) {
             this._inc('stat'); const current = await backend.stat(localPath, options);
             if (!current) throw new FSError('ENOENT', 'not found', 'write', path);
