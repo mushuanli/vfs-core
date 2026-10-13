@@ -61,12 +61,16 @@ export interface IDeviceDriver {
 
     /** 设备初始化 */
     init?(): Promise<void>;
+    /** Optional namespace readiness gate; concurrent access must share initialization. */
+    ready?(): Promise<void>;
 
     /** 设备销毁（应关闭所有活跃会话） */
     dispose?(): Promise<void>;
 }
 
 export interface IDeviceManager {
+    /** Wait for device configuration and namespace publication before accessing its path. */
+    ready(path: string): Promise<void>;
     register(driver: IDeviceDriver): void;
     unregister(handlerId: string): void;
     has(handlerId: string): boolean;

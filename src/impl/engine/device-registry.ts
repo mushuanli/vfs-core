@@ -9,9 +9,11 @@ import { FSDeviceNotFoundError, FSAlreadyExistsError, FSDeviceFrozenError } from
 export class DeviceRegistry implements IDeviceManager {
     private readonly drivers = new Map<string, IDeviceDriver>();
     private _frozen = false;
+    private closing?: Promise<void>;
+    private readonly readiness = new Map<string, Promise<void>>();
 
     register(driver: IDeviceDriver): void {
-        if (this._frozen) throw new FSDeviceFrozenError('register');
+        if (this.closing || this._frozen) throw new FSDeviceFrozenError('register');
         if (this.drivers.has(driver.handlerId)) {
             throw new FSAlreadyExistsError(driver.handlerId, 'device:register');
         }
@@ -19,8 +21,9 @@ export class DeviceRegistry implements IDeviceManager {
     }
 
     unregister(handlerId: string): void {
-        if (this._frozen) throw new FSDeviceFrozenError('unregister');
+        if (this.closing || this._frozen) throw new FSDeviceFrozenError('unregister');
         this.drivers.delete(handlerId);
+        this.readiness.delete(handlerId);
     }
 
     has(handlerId: string): boolean {
@@ -47,17 +50,40 @@ export class DeviceRegistry implements IDeviceManager {
         return this._frozen;
     }
 
+    async ready(path: string): Promise<void> {
+        if (this.closing) throw new FSDeviceFrozenError('ready');
+        if (path !== '/dev' && !path.startsWith('/dev/')) return;
+        const handler = path.split('/')[2];
+        const drivers = handler ? [this.drivers.get(handler)] : [...this.drivers.values()];
+        await Promise.all(drivers.map(driver => {
+            if (!driver?.ready) return;
+            let pending = this.readiness.get(driver.handlerId);
+            if (!pending) {
+                pending = Promise.resolve().then(() => driver.ready!());
+                this.readiness.set(driver.handlerId, pending);
+            }
+            return pending;
+        }));
+    }
+
     async initAll(): Promise<void> {
         for (const driver of this.drivers.values()) {
             await driver.init?.();
         }
     }
 
-    async disposeAll(): Promise<void> {
-        for (const driver of this.drivers.values()) {
-            await driver.dispose?.();
-        }
+    disposeAll(): Promise<void> {
+        this.closing ??= this.disposeDrivers();
+        return this.closing;
+    }
+
+    private async disposeDrivers(): Promise<void> {
+        await Promise.allSettled(this.readiness.values());
+        this.readiness.clear();
+        const results = await Promise.allSettled([...this.drivers.values()].map(driver => driver.dispose?.()));
         this.drivers.clear();
         this._frozen = false;
+        const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+        if (failures.length) throw new AggregateError(failures, 'Device cleanup failed');
     }
 }

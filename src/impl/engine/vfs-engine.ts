@@ -153,15 +153,17 @@ export class VFSEngine {
     private async bootstrap(): Promise<void> {
         // Ensure root and system directories exist
         this._inc('stat');
-        if (!(await this.backend.stat('/'))) {
+        if (!(await this.tryStatType('/'))) {
             this._inc('mkdir'); await this.backend.mkdir('/');
         }
-        for (const dirName of SYSTEM_DIRS) {
+        const results = await Promise.allSettled(SYSTEM_DIRS.map(async dirName => {
             this._inc('stat');
-            if (!(await this.backend.stat(`/${dirName}`))) {
+            if (!(await this.tryStatType(`/${dirName}`))) {
                 this._inc('mkdir'); await this.backend.mkdir(`/${dirName}`);
             }
-        }
+        }));
+        const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+        if (failures.length) throw new AggregateError(failures, 'System directory initialization failed: ' + failures.map(error => error instanceof Error ? error.message : String(error)).join('; '));
         // Ensure default system subdirectories exist (idempotent — only creates if missing)
         await this.initDefaultConfig();
     }
@@ -623,15 +625,21 @@ export class VFSEngine {
 
     async ensureDirectoryPath(systemPath: string, options?: OperationOptions): Promise<void> {
         const parts = systemPath.split('/').filter(Boolean);
-        let current = '';
-        for (const seg of parts) {
-            current += '/' + seg;
-            const { backend, localPath } = this.resolveStore(current);
+        const paths = parts.map((_, index) => '/' + parts.slice(0, index + 1).join('/'));
+        const nodes = await Promise.allSettled(paths.map(path => {
             this._inc('stat');
-            const exists = backend.statType ? await backend.statType(localPath, options) : await backend.stat(localPath, options);
-            if (!exists) {
+            return this.tryStatType(path, options);
+        }));
+        for (const [index, path] of paths.entries()) {
+            checkOperation(options);
+            const result = nodes[index];
+            if (result.status === 'rejected') throw result.reason;
+            const node = result.value;
+            if (node && node.type !== 'directory') throw new FSError('ENOTDIR', 'Not a directory', 'mkdir', path);
+            if (!node) {
+                const { backend, localPath } = this.resolveStore(path);
                 this._inc('mkdir'); await backend.mkdir(localPath, options);
-            } else if (exists.type !== 'directory') throw new FSError('ENOTDIR', 'Not a directory', 'mkdir', current);
+            }
         }
     }
 

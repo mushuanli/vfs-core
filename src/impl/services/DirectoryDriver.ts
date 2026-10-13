@@ -115,12 +115,14 @@ export class DirectoryDriver implements IFSDriver {
     // ══════════════════════════════════════════════════════════
 
     async getNode(path: string, options?: OperationOptions): Promise<FSNode | null> {
+        await this.ctx.devices.ready(this.ctx.toRealPath(path));
         checkOperation(options);
         const node = await this.ctx.engine.tryStat(this.ctx.toRealPath(path), options);
         return node ? this.ctx.toVirtualNode(node) : null;
     }
 
     async getNodeType(path: string, options?: OperationOptions): Promise<Pick<FSNode, 'type'> | null> {
+        await this.ctx.devices.ready(this.ctx.toRealPath(path));
         checkOperation(options);
         return this.ctx.engine.tryStatType(this.ctx.toRealPath(path), options);
     }
@@ -129,6 +131,8 @@ export class DirectoryDriver implements IFSDriver {
     getChildren(path: string, options: ListOptions & { fields: 'entry' }): Promise<DirEntry[]>;
     getChildren(path: string, options?: ListOptions): Promise<FSNode[] | DirEntry[]>;
     async getChildren(path: string, options?: ListOptions): Promise<FSNode[] | DirEntry[]> {
+        await this.ctx.devices.ready(this.ctx.toRealPath(path));
+        checkOperation(options);
         const realPath = this.ctx.toRealPath(path);
 
         if (options?.fields === 'entry') {
@@ -156,6 +160,8 @@ export class DirectoryDriver implements IFSDriver {
     readContent(path: string, options: ReadOptions & { encoding: 'binary' }): Promise<ArrayBuffer>;
     readContent(path: string, options?: ReadOptions): Promise<FileContent>;
     async readContent(path: string, options?: ReadOptions): Promise<FileContent> {
+        await this.ctx.devices.ready(this.ctx.toRealPath(path));
+        checkOperation(options);
         const realPath = this.ctx.toRealPath(path);
         if (options?.representation !== 'bytes') {
             const node = await this.ctx.engine.tryStatType(realPath, options);
@@ -182,6 +188,7 @@ export class DirectoryDriver implements IFSDriver {
     }
 
     async exists(path: string, options?: OperationOptions): Promise<boolean> {
+        await this.ctx.devices.ready(this.ctx.toRealPath(path));
         checkOperation(options);
         return (await this.ctx.engine.tryStatType(this.ctx.toRealPath(path), options)) !== null;
     }

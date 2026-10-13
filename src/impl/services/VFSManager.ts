@@ -99,6 +99,8 @@ export class VFSManager implements IVFSManager {
     async openDevice(path: string, options?: Record<string, unknown>): Promise<import('../../protocol').IDeviceHandle> {
         if (this.closing || !this.initialized) throw new FSError('EACCES', 'Filesystem host is not active');
         if (!path.startsWith('/dev/') || path.split('/').includes('..') || /[\\\0]/.test(path)) throw new FSError('EINVAL', 'Invalid device path');
+        await this.devices.ready(path);
+        if (this.closing) throw new FSError('EACCES', 'Filesystem host is closing');
         const node = await this.engine.stat(path);
         if (node.type !== 'device' || !node.deviceHandlerId) throw new FSError('ENOTTY', 'Not a device');
         const driver = this.devices.get(node.deviceHandlerId);
