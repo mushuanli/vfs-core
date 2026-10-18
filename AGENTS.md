@@ -109,6 +109,8 @@ LocalFS 后端测试在 `@itookit/vfsdriver-localfs`,IndexedDB 后端测试在 `
 
 文件发现使用 `discoverFiles` + `FileDiscoverySource`：每次搜索从授权边界继承 `.gitignore` / `.mindosignore`，在遍历前剪枝，缓存仅限本次搜索。`IFileSystem.discoveryRoot` 可选声明规则边界；FileSystemView 必须透传嵌套视图边界并限制在当前挂载内。忽略规则不改变直接读写权限。回归在 `tests/file-discovery.test.ts`。
 
+`searchKeywords` / `matchesKeywords` 提供无 I/O 的通用字面 AND 匹配：横向空白分词、忽略大小写，显式换行保留为字面片段；调用方决定名称、路径、行或消息等匹配单位。不改变存储查询 `name.contains` 的字面契约。回归在 `tests/search-keywords.test.ts`。
+
 在线文件传输使用 `transferFileSystemEntry`（源/目标授权 `IFileSystem`、源路径、目标目录）。它拒绝覆盖、保留内容/记录/附件并在移动删除前复核源；跨存储不承诺原子性。`copyFileSystemTree` 仍仅用于静默启动迁移，不用于在线文件管理。
 
 设备命名空间支持可选 `IDeviceDriver.ready()`：注册表按 handler 共享 readiness Promise；目录查询及 openDevice 在路径解析前等待。普通文件访问不触发设备准备。准备失败保留原错误，关闭注册表后禁止新准备并等待在途准备排空，再释放驱动。初始化系统目录先并发探测类型，缺失目录仍按父子顺序创建。
