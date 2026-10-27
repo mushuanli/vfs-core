@@ -57,7 +57,11 @@ export class FileStorageAdapter implements IStorageBackend {
         if (!this.fileStorage.mutations) throw new FSError('EROFS', 'Read-only source');
         return this.fileStorage.mutations.rename(this.path(from), this.path(to), options);
     }
-    async updateMetadata(): Promise<void> { throw new FSCapabilityError('metadata'); }
+    async updateMetadata(path: string, metadata: Record<string, unknown>): Promise<void> {
+        if (!this.fileStorage.mutations) throw new FSError('EROFS', 'Read-only source');
+        if (!this.fileStorage.mutations.updateMetadata) throw new FSCapabilityError('metadata');
+        await this.fileStorage.mutations.updateMetadata(this.path(path), metadata);
+    }
     async setTags(): Promise<void> { throw new FSCapabilityError('tags'); }
     async getAllTags(): Promise<string[]> { return []; }
     private path(path: string) { return normalizeVirtualPath(path).slice(1); }
@@ -65,7 +69,7 @@ export class FileStorageAdapter implements IStorageBackend {
         path = normalizeVirtualPath(path);
         return { path, parentPath: path === '/' ? null : P.dirname(path), name: P.basename(path),
             type: stat.kind, createdAt: stat.createdAt ?? 0, modifiedAt: stat.modifiedAt ?? 0,
-            version: 0, revision: stat.revision, size: stat.size, tags: [], metadata: {},
+            version: 0, revision: stat.revision, sourceIdentity: stat.sourceIdentity, size: stat.size, tags: [], metadata: {...stat.metadata},
             ...(stat.kind === 'symlink' ? { target: '' } : {}) } as FSNode;
     }
 }

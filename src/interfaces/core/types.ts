@@ -57,6 +57,8 @@ interface FSNodeBase {
     readonly tags: readonly string[];
     readonly metadata: Readonly<FSNodeMetadata>;
     readonly viewId?: string;
+    /** Optional source-owned persistent identity, preserved across view projections. */
+    readonly sourceIdentity?: string;
     readonly icon?: string;
     readonly mimeType?: string;
 }

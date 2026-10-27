@@ -6,6 +6,10 @@ export interface FileStat {
     createdAt?: number;
     modifiedAt?: number;
     revision?: string;
+    /** Opaque source identity, independent of client mount prefixes. */
+    sourceIdentity?: string;
+    /** Optional source-owned metadata, persisted beside the remote file tree. */
+    metadata?: Record<string, unknown>;
 }
 export interface FileEntry { name: string; stat: FileStat; }
 export interface FilePage { entries: FileEntry[]; nextCursor: string | null; warnings?: string[]; }
@@ -20,6 +24,7 @@ export interface FileReader {
 }
 export type ReplaceCondition = { kind: 'create-only' } | { kind: 'match'; revision: string };
 export interface FileMutations {
+    updateMetadata?(path: string, patch: Record<string, unknown>, options?: OperationOptions): Promise<void>;
     replace(path: string, data: Uint8Array, condition: ReplaceCondition, options?: OperationOptions): Promise<FileStat>;
     mkdir(path: string, options?: OperationOptions): Promise<FileStat>;
     rename(from: string, to: string, options?: OperationOptions): Promise<void>;
